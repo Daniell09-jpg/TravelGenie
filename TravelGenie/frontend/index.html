@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Travel Planner</title>
+<style>
+    body {
+        font-family: 'Segoe UI', sans-serif;
+        background: linear-gradient(135deg, #6a11cb, #2575fc);
+        margin: 0; padding: 0;
+        display: flex; justify-content: center; align-items: center;
+        height: 100vh; color: #333;
+    }
+    .container {
+        background: #fff;
+        width: 100%;
+        max-width: 700px;
+        border-radius: 12px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+        padding: 20px;
+        display: flex; flex-direction: column;
+        height: 600px;
+    }
+    h2 { text-align: center; color: #2575fc; }
+    #chat-box {
+        flex: 1;
+        border: 1px solid #aaa;
+        border-radius: 8px;
+        padding: 10px;
+        overflow-y: auto;
+        margin-bottom: 15px;
+        background: #f9f9f9;
+    }
+    .message-input {
+        display: flex;
+    }
+    .message-input input {
+        flex: 1;
+        padding: 12px;
+        border-radius: 8px 0 0 8px;
+        border: 1px solid #ccc;
+        font-size: 16px;
+        outline: none;
+    }
+    .message-input input:focus {
+        border-color: #2575fc;
+        box-shadow: 0 0 5px rgba(37,117,252,0.5);
+    }
+    .message-input button {
+        padding: 12px 20px;
+        border: none;
+        background: #2575fc;
+        color: white;
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        transition: 0.3s;
+    }
+    .message-input button:hover { background: #1a5bd8; }
+    .chat-msg b { color: #2575fc; }
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h2>AI Travel Planner</h2>
+    <div id="chat-box"></div>
+    <div class="message-input">
+        <input id="msg" placeholder="Ask about Boracay or any destination...">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<script>
+function display(role, text){
+    const box = document.getElementById("chat-box");
+    const msgDiv = document.createElement("div");
+    msgDiv.classList.add("chat-msg");
+    msgDiv.innerHTML = `<b>${role}:</b> ${text}`;
+    box.appendChild(msgDiv);
+    box.scrollTop = box.scrollHeight;
+}
+
+async function sendMessage(){
+    const input = document.getElementById("msg");
+    const message = input.value.trim();
+    if(!message) return;
+    input.value = "";
+    display("You", message);
+
+    try {
+        const res = await fetch("http://localhost:8080/chat", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ message })
+        });
+        const data = await res.json();
+        display("AI", data.reply);
+    } catch(err) {
+        display("AI", "Server error. Try again.");
+        console.error(err);
+    }
+}
+</script>
+
+</body>
+</html>
