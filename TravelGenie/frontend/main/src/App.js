@@ -1,6 +1,58 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Trash2, Edit3, Moon, Sun, Copy } from "lucide-react";
+import "leaflet/dist/leaflet.css";
+
+// Leaflet Map Picker
+import { MapContainer, TileLayer, Marker, useMapEvents } from "react-leaflet";
+import L from "leaflet";
+
+// Fix marker icon issue
+const markerIcon = new L.Icon({
+  iconUrl: "https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/images/marker-icon.png",
+  shadowUrl: "https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/images/marker-shadow.png",
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+});
+
+function LocationSelector({ setLocation }) {
+  useMapEvents({
+    click(e) {
+      setLocation({
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+      });
+    },
+  });
+  return null;
+}
+
+function MapPicker({ location, setLocation, darkMode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.96 }}
+      animate={{ opacity: 1, scale: 1 }}
+      style={{
+        width: "48vw",
+        height: "73vh",
+        borderRadius: 12,
+        overflow: "hidden",
+        marginBottom: 20,
+        border: darkMode ? "1px solid #334155" : "1px solid #ccc",
+      }}
+    >
+      <MapContainer
+        center={location || { lat: 14.5995, lng: 120.9842 }}
+        zoom={12}
+        style={{ width: "100%", height: "100%" }}
+      >
+        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <LocationSelector setLocation={setLocation} />
+        {location && <Marker position={location} icon={markerIcon} />}
+      </MapContainer>
+    </motion.div>
+  );
+}
 
 // Example prebuilt planners
 const PREBUILT_PLANNERS = [
@@ -66,6 +118,13 @@ export default function TravelGenieMain() {
   const [openPlanners, setOpenPlanners] = useState(
     planners.map(() => false)
   );
+  const [mapLocation, setMapLocation] = useState(
+    JSON.parse(localStorage.getItem("travelgenie_selected_location")) || null
+  );
+  useEffect(() => {
+    localStorage.setItem("travelgenie_selected_location", JSON.stringify(mapLocation));
+  }, [mapLocation]);
+
 
   function editPlanner(index) {
     const title = prompt("Edit Title", planners[index].title);
@@ -105,12 +164,20 @@ export default function TravelGenieMain() {
     const newMessages = [...messages, { sender: "user", text: input }];
     setMessages(newMessages);
     try {
+      const locationString = mapLocation
+        ? `Location: Latitude ${mapLocation.lat}, Longitude ${mapLocation.lng}`
+        : "Location: Not specified";
+
       const response = await fetch("http://localhost:8000/api/travelgenie", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ msg: input }),
+        body: JSON.stringify({
+          msg: input + "\n" + locationString + "\n assuming I live in Philippines Luzon."
+        }),
       });
+
       const plannerJson = await response.json();
+
       if (plannerJson.msg !== "success") {
         setMessages((m) => [...m, { sender: "ai", text: plannerJson.msg }]);
         return;
@@ -119,7 +186,7 @@ export default function TravelGenieMain() {
       setPlanners((prev) => [...prev, plannerJson]);
       setMessages((m) => [
         ...m,
-        { sender: "ai", text: "A new travel planner has been created!" },
+        { sender: "ai", text: plannerJson.recommendation || "Here's your travel planner!" },
       ]);
     } catch (err) {
       setMessages((m) => [...m, { sender: "ai", text: "Server error. Try again." }]);
@@ -193,167 +260,195 @@ export default function TravelGenieMain() {
       </div>
 
       {/* Chat Window */}
-      <div
-        style={{
-          borderRadius: 10,
-          padding: 12,
-          marginBottom: 20,
-          border: darkMode ? "1px solid #2c3a50" : "1px solid #d5d5d5",
-          backgroundColor: darkMode ? "#1a2332" : "#ffffff",
-          height: 260,
-          overflowY: "auto",
-        }}
-      >
-        {messages.map((m, i) => (
-          <motion.div
-            key={i}
-            initial={{ opacity: 0, x: m.sender === "user" ? 40 : -40 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.25 }}
-            style={{
-              padding: 10,
-              borderRadius: 8,
-              maxWidth: "75%",
-              marginBottom: 8,
-              marginLeft: m.sender === "user" ? "auto" : 0,
-              background: m.sender === "user" ? "#2979ff" : darkMode ? "#2e3b4c" : "#e9e9e9",
-              color: m.sender === "user" ? "white" : darkMode ? "#d0dae6" : "#111",
-            }}
-          >
-            {m.text}
-          </motion.div>
-        ))}
-      </div>
-
-      {/* Chat Input */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 30 }}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Tell TravelGenie about your dream trip..."
-          style={{
-            flex: 1,
-            padding: 12,
-            borderRadius: 8,
-            border: darkMode ? "1px solid #2c3a50" : "1px solid #ccc",
-            background: darkMode ? "#0f1724" : "#fff",
-            color: darkMode ? "#e4e9f0" : "#111",
-          }}
-        />
-        <button
-          onClick={sendMessage}
-          style={{
-            background: "linear-gradient(90deg, #4b8bf4, #3066ff)",
-            color: "#fff",
-            padding: "10px 18px",
-            borderRadius: 8,
-            border: "none",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          Send
-        </button>
-      </div>
-
-      {/* Planner Section */}
-      <h2 style={{ fontSize: 26, fontWeight: 700, marginBottom: 12 }}>Your Travel Planners</h2>
-
-      {planners.map((planner, index) => (
-        <motion.div
-          key={index}
-          initial={{ opacity: 0, scale: 0.97 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.25 }}
-          style={{
-            marginBottom: 22,
-            padding: 18,
-            borderRadius: 12,
-            border: darkMode ? "1px solid #334155" : "1px solid #d7d7d7",
-            background: darkMode ? "#111827" : "#ffffff",
-            boxShadow: "0 4px 20px rgba(0,0,0,0.05)"
-          }}
-        >
-          {/* Title and actions */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button
-              onClick={() => {
-                const newOpen = [...openPlanners];
-                newOpen[index] = !newOpen[index];
-                setOpenPlanners(newOpen);
-              }}
+      <div style={{
+        display: "flex",
+        flexDirection: "row",
+        width: "auto"
+      }}>
+        <div style={{ flex: 1, marginRight: 0 }}>
+          <MapPicker location={mapLocation} setLocation={setMapLocation} darkMode={darkMode} />
+        </div>
+        <div style={{ flex: 1, marginLeft: 20 }}>
+          {mapLocation && (
+            <div
               style={{
-                background: "none",
-                border: "none",
-                fontSize: 20,
-                fontWeight: 800,
-                cursor: "pointer",
-                color: darkMode ? "#e4e9f0" : "#111"
+                padding: 10,
+                borderRadius: 8,
+                marginBottom: 20,
+                background: darkMode ? "#1f2a3a" : "#eef3ff",
+                border: darkMode ? "1px solid #334155" : "1px solid #c7d4ff",
               }}
             >
-              {planner.title || `Trip #${index + 1}`} {openPlanners[index] ? "▲" : "▼"}
-            </button>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                onClick={() => editPlanner(index)}
-                style={{ background: "none", border: "none", cursor: "pointer", color: darkMode ? "#9dbbff" : "#333" }}
-              >
-                <Edit3 size={20} />
-              </button>
-
-              <button
-                onClick={() => deletePlanner(index)}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "#d33" }}
-              >
-                <Trash2 size={20} />
-              </button>
-            </div>
-          </div>
-
-          {/* Planner Details */}
-          {openPlanners[index] && (
-            <div style={{ marginTop: 12 }}>
-              <p style={{ marginBottom: 12, opacity: 0.8 }}>{planner.recommendation}</p>
-
-              {planner.days?.map((d, i) => (
-                <div
-                  key={i}
-                  style={{
-                    marginBottom: 12,
-                    padding: 12,
-                    borderRadius: 10,
-                    background: darkMode ? "#1f2a3a" : "#f5f5f5"
-                  }}
-                >
-                  <h4 style={{ fontWeight: 700, marginBottom: 6 }}>Day {d.day}</h4>
-                  <ul style={{ marginLeft: 16 }}>
-                    {d.activities.map((a, idx) => (
-                      <li key={idx}>
-                        {a.time} — {a.trip} (₱{a.cost})
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-
-              <p style={{ fontWeight: 700, marginTop: 10 }}>Total Cost: ₱{planner.totalCost}</p>
+              <strong>Chosen Location:</strong><br />
+              📍 Lat: {mapLocation.lat.toFixed(5)}, Lng: {mapLocation.lng.toFixed(5)}
             </div>
           )}
-        </motion.div>
-      ))}
+          <div
+            style={{
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 20,
+              border: darkMode ? "1px solid #2c3a50" : "1px solid #d5d5d5",
+              backgroundColor: darkMode ? "#1a2332" : "#ffffff",
+              height: 260,
+              overflowY: "auto",
+            }}
+          >
+            {messages.map((m, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, x: m.sender === "user" ? 40 : -40 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.25 }}
+                style={{
+                  padding: 10,
+                  borderRadius: 8,
+                  maxWidth: "75%",
+                  marginBottom: 8,
+                  marginLeft: m.sender === "user" ? "auto" : 0,
+                  background: m.sender === "user" ? "#2979ff" : darkMode ? "#2e3b4c" : "#e9e9e9",
+                  color: m.sender === "user" ? "white" : darkMode ? "#d0dae6" : "#111",
+                }}
+              >
+                {m.text}
+              </motion.div>
+            ))}
+          </div>
 
-      {/* Modal Editor */}
-      {modalPlannerIndex !== null && (
-        <PlannerModal
-          planner={planners[modalPlannerIndex]}
-          onClose={() => setModalPlannerIndex(null)}
-          onSave={(updated) => { updatePlanner(modalPlannerIndex, updated); setModalPlannerIndex(null); }}
-          darkMode={darkMode}
-        />
-      )}
+          {/* Chat Input */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 30 }}>
+            <input
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Tell TravelGenie about your dream trip..."
+              style={{
+                flex: 1,
+                padding: 12,
+                borderRadius: 8,
+                border: darkMode ? "1px solid #2c3a50" : "1px solid #ccc",
+                background: darkMode ? "#0f1724" : "#fff",
+                color: darkMode ? "#e4e9f0" : "#111",
+              }}
+            />
+            <button
+              onClick={sendMessage}
+              style={{
+                background: "linear-gradient(90deg, #4b8bf4, #3066ff)",
+                color: "#fff",
+                padding: "10px 18px",
+                borderRadius: 8,
+                border: "none",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              Send
+            </button>
+          </div>
+
+          {/* Planner Section */}
+          <h2 style={{ fontSize: 26, fontWeight: 700, marginBottom: 12 }}>Your Travel Planners</h2>
+
+          {planners.map((planner, index) => (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.25 }}
+              style={{
+                marginBottom: 22,
+                padding: 18,
+                borderRadius: 12,
+                border: darkMode ? "1px solid #334155" : "1px solid #d7d7d7",
+                background: darkMode ? "#111827" : "#ffffff",
+                boxShadow: "0 4px 20px rgba(0,0,0,0.05)"
+              }}
+            >
+              {/* Title and actions */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <button
+                  onClick={() => {
+                    const newOpen = [...openPlanners];
+                    newOpen[index] = !newOpen[index];
+                    setOpenPlanners(newOpen);
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    fontSize: 20,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    color: darkMode ? "#e4e9f0" : "#111"
+                  }}
+                >
+                  {planner.title || `Trip #${index + 1}`} {openPlanners[index] ? "▲" : "▼"}
+                </button>
+
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button
+                    onClick={() => editPlanner(index)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: darkMode ? "#9dbbff" : "#333" }}
+                  >
+                    <Edit3 size={20} />
+                  </button>
+
+                  <button
+                    onClick={() => deletePlanner(index)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#d33" }}
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Planner Details */}
+              {openPlanners[index] && (
+                <div style={{ marginTop: 12 }}>
+                  <p style={{ marginBottom: 12, opacity: 0.8 }}>{planner.recommendation}</p>
+
+                  {planner.days?.map((d, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        marginBottom: 12,
+                        padding: 12,
+                        borderRadius: 10,
+                        background: darkMode ? "#1f2a3a" : "#f5f5f5"
+                      }}
+                    >
+                      <h4 style={{ fontWeight: 700, marginBottom: 6 }}>Day {d.day}</h4>
+                      <ul style={{ marginLeft: 16 }}>
+                        {d.activities.map((a, idx) => (
+                          <li key={idx}>
+                            {a.time} — {a.trip} (₱{a.cost})
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+
+                  <p style={{ fontWeight: 700, marginTop: 10 }}>Total Cost: ₱{planner.totalCost}</p>
+                </div>
+              )}
+            </motion.div>
+          ))}
+
+          {/* Modal Editor */}
+          {modalPlannerIndex !== null && (
+            <PlannerModal
+              planner={planners[modalPlannerIndex]}
+              onClose={() => setModalPlannerIndex(null)}
+              onSave={(updated) => { updatePlanner(modalPlannerIndex, updated); setModalPlannerIndex(null); }}
+              darkMode={darkMode}
+            />
+          )}
+        </div>
+      </div>
+
+
+
     </div>
   );
 }

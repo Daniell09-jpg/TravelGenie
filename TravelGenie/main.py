@@ -1,73 +1,36 @@
 import json
-
-from pydantic import BaseModel
-from typing import List
+import re
+import ast
+import os
 import requests
+from pprint import pprint
+from typing import List
+from dotenv import load_dotenv
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-import os
-from dotenv import load_dotenv
+
 load_dotenv()
 
-import re
-from pprint import pprint
-
-def parse_planner_string(s):
-    # Split by day markers (# or ,)
-    day_strings = re.split(r'\s*#\s*|\s*,\s*', s)
-    result = []
-
-    for day_str in day_strings:
-        # Extract day number
-        day_match = re.search(r'day\s*(\d+)\s*:', day_str, re.IGNORECASE)
-        if not day_match:
-            continue
-        day_number = int(day_match.group(1))
-
-        # Extract all activities
-        activity_pattern = r'\(time:\s*([^)]+)\)\(trip:\s*([^)]+)\)\(cost:\s*P?(\d+)\)'
-        activities = []
-        for m in re.finditer(activity_pattern, day_str, re.IGNORECASE):
-            activities.append({
-                "time": m.group(1).strip(),
-                "trip": m.group(2).strip(),
-                "cost": int(m.group(3))
-            })
-
-        result.append({
-            "day": day_number,
-            "activities": activities
-        })
-
-    return result
-   
-app = FastAPI()
-
-from fastapi.middleware.cors import CORSMiddleware
-
-# Allow CORS for all domains
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],       # Allow all domains
-    allow_credentials=True,
-    allow_methods=["*"],       # Allow all HTTP methods (GET, POST, etc.)
-    allow_headers=["*"],       # Allow all headers
-)
-
-# REQ Interface
+# -----------------------------
+# Pydantic Models
+# -----------------------------
 class ChatRequest(BaseModel):
     msg: str
-    
-# RES Interface
+
+
 class Activity(BaseModel):
     time: str
     trip: str
     cost: int
 
+
 class Day(BaseModel):
     day: int
     activities: List[Activity]
+
 
 class ChatResponse(BaseModel):
     msg: str
@@ -76,82 +39,131 @@ class ChatResponse(BaseModel):
     totalCost: int
     days: List[Day]
 
+
+# -----------------------------
+# App Initialization
+# -----------------------------
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def safe_int(value):
+    """Converts string cost (possibly with 'P' or spaces) to int safely."""
+    try:
+        return int(str(value).replace("P", "").strip())
+    except:
+        return 0
+
+
+def parse_agent_response(msg_text: str):
+    """
+    Expected AI format:
+
+    title: X # recommendation: Y # totalCost: 123 # {'data': [{...}]}
+    """
+
+    # Split using '#'
+    parts = [p.strip() for p in msg_text.split("#")]
+
+    # Base defaults
+    title = "false"
+    recommendation = "false"
+    totalCost_num = 0
+    parsed_days = []
+
+    try:
+        # --- TITLE ---
+        if "title:" in parts[0]:
+            title = parts[0].split(":", 1)[1].strip()
+
+        # --- RECOMMENDATION ---
+        if len(parts) > 1 and "recommendation:" in parts[1]:
+            recommendation = parts[1].split(":", 1)[1].strip()
+
+        # --- TOTAL COST ---
+        if len(parts) > 2 and "totalCost:" in parts[2]:
+            totalCost = parts[2].split(":", 1)[1].strip()
+            totalCost_num = safe_int(totalCost)
+
+        # --- DAYS DATA ---
+        if len(parts) > 3:
+            raw_days = parts[3]
+
+            # Convert Python-like dict string into real dict
+            days_dict = ast.literal_eval(raw_days)
+            parsed_days = days_dict.get("data", [])
+
+    except Exception as e:
+        print("❌ PARSE ERROR:", e)
+        return dict(
+            msg=msg_text,
+            title="false",
+            recommendation="false",
+            totalCost=0,
+            days=[]
+        )
+
+    # SUCCESS
+    return dict(
+        msg="success",
+        title=title,
+        recommendation=recommendation,
+        totalCost=totalCost_num,
+        days=parsed_days
+    )
+
+
+# -----------------------------
+# Main API
+# -----------------------------
 @app.post("/api/travelgenie", response_model=ChatResponse)
 def agent(request: ChatRequest):
+
     url = os.getenv("MODEL_URL")
+
+    system_prompt = (
+        "Agent: Help User plan their travel activities. "
+        "Your responses should be in this exact format (NO EXTRA TEXT): "
+        "title: Tokyo Trip # recommendation: Best for travelers # totalCost: 3000 # "
+        "{'data': ["
+        "{'day': 1, 'activities': [ {'time': '09:00','trip': 'Temple','cost': 200} ]},"
+        "{'day': 2, 'activities': [ {'time': '10:00','trip': 'Skytree','cost': 2100} ]}"
+        "]}"
+    )
+
     payload = {
         "user": request.msg,
-        "system": (
-            "Agent: Help User plan their travel activities. "
-            "Your responses should be in this example format (No added just the example): "
-            "title: Tokyo 3-Day Adventure # recommendation: Best for first-time travelers exploring modern and traditional Japan. # totalCost: 54000 # "
-            "{ 'data:' [{"
-            "'day': 1,"
-            "'activities': ["
-                "{ 'time': '09:00', 'trip': 'Senso-ji Temple', 'cost': 0},"
-                "{ 'time': '12:00', 'trip': 'Ueno Zoo', 'cost': 500},"
-                "{ 'time': '18:00', 'trip': 'Akihabara Night Walk', 'cost': 0"
-                "},"
-            "],"
-            "},"
-            "{"
-            "'day': 2,"
-            "'activities': ["
-                "{ 'time': '10:00', 'trip': 'Tokyo Skytree', 'cost': '2100' },"
-                "{ 'time': '14:00', 'trip': 'Asakusa Food Tour', 'cost': '1500' },"
-            "],"
-            "}},]"
-        )
+        "system": system_prompt
     }
 
     try:
-        response = requests.post(url, json=payload)
+        # Send request to model
+        response = requests.post(url, json=payload, timeout=30)
         response.raise_for_status()
+
         data = response.json()
-        
-        # Extract the message string from the response
-        # Depending on the remote API, it may be under "msg" or "text"
         msg_text = data.get("msg") or data.get("text") or str(data)
 
-        # Parse fields from the returned string
-        # Example expected format: "title: Basketball, date: 1, notes: , results: todo"
-        import ast
+        # Parse AI response safely
+        parsed = parse_agent_response(msg_text)
 
-        try:
-            # Split msg_text into parts
-            parts = [part.strip() for part in msg_text.split("#")]
-
-            title = parts[0].split(":", 1)[1].strip()
-            recommendation = parts[1].split(":", 1)[1].strip()
-            totalCost = parts[2].split(":", 1)[1].strip()
-            totalCost_num = totalCost.replace("P", "").strip()
-
-            # Convert Python dict string to actual dict
-            day = ast.literal_eval(parts[3].strip()) if len(parts) > 3 else {"data": []}
-
-            msg = "success"
-        except Exception as e:
-            title = recommendation = "false"
-            totalCost = totalCost_num = "0"
-            day = {"data": []}
-            msg = e + msg_text
-
-
-        return {
-            "msg": msg,
-            "title": title,
-            "recommendation": recommendation,
-            "totalCost": int(totalCost_num),
-            "days": day["data"]
-        }
+        return parsed
 
     except requests.RequestException as e:
         return {
-            "msg": f"Error fetching data: {str(e)}",
+            "msg": f"Error: {str(e)}",
             "title": "false",
             "recommendation": "false",
             "totalCost": 0,
-            "days": []
+            "days": [],
         }
-        
-#run: uvicorn main:app --reload
